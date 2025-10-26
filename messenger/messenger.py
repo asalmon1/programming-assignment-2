@@ -1,9 +1,15 @@
 import os
 import pickle
 import string
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, hmac, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+def serialize_public_key(pk):
+    return pk.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
 
 class MessengerServer:
     def __init__(self, server_signing_key, server_decryption_key):
@@ -31,7 +37,7 @@ class MessengerClient:
         self.own_dh_keypair =  ec.generate_private_key(ec.SECP384R1())
         certificate = {
             'name': self.name,
-            'pk': self.own_dh_keypair.public_key()
+            'pk': serialize_public_key(self.own_dh_keypair.public_key())
         }
         return pickle.dumps(certificate)
 
