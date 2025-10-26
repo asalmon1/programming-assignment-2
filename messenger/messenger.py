@@ -21,8 +21,11 @@ class MessengerServer:
         return
 
     def signCert(self, cert):
-        raise Exception("not implemented!")
-        return
+        signature = self.server_signing_key.sign(
+            cert,
+            ec.ECDSA(hashes.SHA256())
+        )
+        return signature
 
 class MessengerClient:
 
@@ -42,8 +45,16 @@ class MessengerClient:
         return pickle.dumps(certificate)
 
     def receiveCertificate(self, certificate, signature):
-        raise Exception("not implemented!")
-        return
+        try:
+            self.server_signing_pk.verify(
+                signature,
+                certificate,
+                ec.ECDSA(hashes.SHA256())
+            )
+        except:
+            raise Exception("certificate signature verification failed")
+        cert_data = pickle.loads(certificate)
+        self.certs[cert_data['name']] = cert_data['pk']
 
     def sendMessage(self, name, message):
         raise Exception("not implemented!")
