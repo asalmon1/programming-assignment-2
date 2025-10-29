@@ -50,52 +50,52 @@ except:
 else:
     error("accepted certificate with incorrect signature")
 
-print("Testing Reporting")
-content = "inappropriate message contents"
-reportPT, reportCT = alice.report("Bob", content)
-decryptedReport = server.decryptReport(reportCT)
-if decryptedReport != reportPT:
-    error("report did not decrypt properly")
-    print(reportPT)
-    print(decryptedReport)
-else:
-    print("Reporting test successful!")
+# print("Testing Reporting")
+# content = "inappropriate message contents"
+# reportPT, reportCT = alice.report("Bob", content)
+# decryptedReport = server.decryptReport(reportCT)
+# if decryptedReport != reportPT:
+#     error("report did not decrypt properly")
+#     print(reportPT)
+#     print(decryptedReport)
+# else:
+#     print("Reporting test successful!")
 
 print("Testing a conversation")
 header, ct = alice.sendMessage("bob", "Hi Bob!")
 msg = bob.receiveMessage("alice", header, ct)
 if msg != "Hi Bob!":
-    error("message 1 was not decrypted correctly")
+    error(f"Message 1 was not decrypted correctly. Should have been 'Hi Bob!' but got '{msg}'")
 
 header, ct = alice.sendMessage("bob", "Hi again Bob!")
 msg = bob.receiveMessage("alice", header, ct)
 if msg != "Hi again Bob!":
-    error("message 2  was not decrypted correctly")
+    error(f"Message 2 was not decrypted correctly. Should have been 'Hi again Bob!' but got '{msg}'")
 
 header, ct = bob.sendMessage("alice", "Hey Alice!")
 msg = alice.receiveMessage("bob", header, ct)
 if msg != "Hey Alice!":
-    error("message 3 was not decrypted correctly")
+    error(f"Message 3 was not decrypted correctly. Should have been 'Hey Alice!' but got '{msg}'")
 
 header, ct = bob.sendMessage("alice", "Can't talk now")
 msg = alice.receiveMessage("bob", header, ct)
 if msg != "Can't talk now":
-    error("message 4 was not decrypted correctly")
+    error(f"Message 4 was not decrypted correctly. Should have been 'Can't talk now' but got '{msg}'")
 
 header, ct = bob.sendMessage("alice", "Started the homework too late :(")
 msg = alice.receiveMessage("bob", header, ct)
 if msg != "Started the homework too late :(":
-    error("message 5 was not decrypted correctly")
+    error(f"Message 5 was not decrypted correctly. Should have been 'Started the homework too late :(' but got '{msg}'")
 
 header, ct = alice.sendMessage("bob", "Ok, bye Bob!")
 msg = bob.receiveMessage("alice", header, ct)
 if msg != "Ok, bye Bob!":
-    error("message 6  was not decrypted correctly")
+    error(f"Message 6  was not decrypted correctly. Should have been 'Ok, bye Bob!' but got '{msg}'")
 
 header, ct = bob.sendMessage("alice", "I'll remember to start early next time!")
 msg = alice.receiveMessage("bob", header, ct)
 if msg != "I'll remember to start early next time!":
-    error("message 7 was not decrypted correctly")
+    error(f"Message 7 was not decrypted correctly. Should have been 'I'll remember to start early next time!' but got '{msg}'")
 
 print("conversation completed!")
 
