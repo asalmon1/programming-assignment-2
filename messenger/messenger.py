@@ -59,8 +59,17 @@ class MessengerServer:
         self.server_decryption_key = server_decryption_key
 
     def decryptReport(self, ct):
-        raise Exception("not implemented!")
-        return
+        report = pickle.loads(ct)
+        shared_key = self.server_decryption_key.exchange(ec.ECDH(), report['pk'])
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(shared_key)
+        key_hash = digest.finalize()
+        aesgcm=AESGCM(key_hash)
+        try:
+            pt = aesgcm.decrypt(report['nonce'],report['ct'])
+        except:
+            raise Exception("report decryption failed")
+        return pt
 
     def signCert(self, cert):
         signature = self.server_signing_key.sign(
@@ -140,5 +149,16 @@ class MessengerClient:
         return
 
     def report(self, name, message):
-        raise Exception("not implemented!")
-        return
+        report_pt = "Name: " + name + "\n" + message
+        report_bytes = bytes(report_pt,encoding='ascii')
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        public_key = private_key.public_key()
+        shared_key = private_key.exchange(ec.ECDH(), self.server_encryption_pk)
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(shared_key)
+        key_hash = digest.finalize()
+        nonce = os.urandom(12)
+        aesgcm=AESGCM(key_hash)
+        ct = aesgcm.encrypt(nonce,report_bytes,None)
+        report_ct = {'report': ct,'pk':serialize_public_key(public_key), 'nonce':nonce}
+        return report_pt, pickle.dumps(report_ct)
