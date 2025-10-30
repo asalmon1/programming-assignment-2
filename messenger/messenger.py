@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-
+MAX_SKIP = 100
 
 def serialize_public_key(pk):
     return pk.public_bytes(
@@ -14,11 +14,14 @@ def serialize_public_key(pk):
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
+
 def deserialize_public_key(data):
     return serialization.load_der_public_key(data)
 
+
 def generate_dh_keypair():
     return ec.generate_private_key(ec.SECP256R1())
+
 
 def kdf_rk(rk, dh_out):
     hkdf = HKDF(
@@ -30,6 +33,7 @@ def kdf_rk(rk, dh_out):
     out = hkdf.derive(dh_out)
     return out[:32], out[32:]
 
+
 def kdf_ck(ck):
     h1 = hmac.HMAC(ck, hashes.SHA256())
     h1.update(b'\x01')
@@ -37,7 +41,8 @@ def kdf_ck(ck):
     h2 = hmac.HMAC(ck, hashes.SHA256())
     h2.update(b'\x02')
     ck_new = h2.finalize()
-    return mk, ck_new
+    return ck_new, mk
+
 
 def generate_header(dh_pair, pn, n):
     dh_pair_serialized = serialize_public_key(dh_pair.public_key())
@@ -48,11 +53,13 @@ def generate_header(dh_pair, pn, n):
         }
     return pickle.dumps(header)
 
+
 def ae_encrypt(mk, plaintext, associated_data):
     aesgcm = AESGCM(mk)
     nonce = os.urandom(12)
     ct = aesgcm.encrypt(nonce, plaintext.encode(), associated_data)
     return nonce + ct
+
 
 def ae_decrypt(mk, ciphertext, associated_data):
     aesgcm = AESGCM(mk)
@@ -61,8 +68,10 @@ def ae_decrypt(mk, ciphertext, associated_data):
     pt = aesgcm.decrypt(nonce, ct, associated_data)
     return pt.decode()
 
+
 def dh(priv, pub):
     return priv.exchange(ec.ECDH(), pub)
+
 
 class MessengerServer:
     def __init__(self, server_signing_key, server_decryption_key):
@@ -92,6 +101,7 @@ class MessengerServer:
             ec.ECDSA(hashes.SHA256())
         )
         return signature
+
 
 class MessengerClient:
 
@@ -133,7 +143,7 @@ class MessengerClient:
 
         dh_sk = dh(state['DHs'], state['DHr'])
 
-        rk, cks = kdf_rk(b'\x00' * 32, dh_sk)
+        rk, cks = kdf_rk(dh_sk, dh_sk)
         state['RK'] = rk
         state['CKs'] = cks
 
@@ -152,9 +162,11 @@ class MessengerClient:
 
         state['DHs'] = self.own_dh_keypair
         state['DHr'] = None
+        
+        Dhr = deserialize_public_key(self.certs[name]['pk'])
 
 
-        state['RK'] = b'\x00' * 32
+        state['RK'] = dh(state['DHs'], Dhr)
         state['CKs'] = None
 
         state['CKr'] = None
@@ -170,13 +182,12 @@ class MessengerClient:
         
         state = self.conns[name]
 
-        mk, state['CKs'] = kdf_ck(state['CKs'])
+        state['CKs'], mk = kdf_ck(state['CKs'])
         Ns = state['Ns']
         state['Ns'] += 1
 
         header = generate_header(state['DHs'], state['PN'], Ns)
         return header, ae_encrypt(mk, message, header)
-
 
     def receiveMessage(self, name, header, ciphertext):
         if name not in self.conns:
@@ -187,10 +198,11 @@ class MessengerClient:
         try:
             header_obj = pickle.loads(header)
             header_dh = header_obj['dh']
+            header_n = header_obj['n']
         except Exception:
             return None
 
-        mk = self.ratchetReceiveKey(state, header_dh)
+        mk = self.ratchetReceiveKey(state, header_dh, header_n)
 
         try:
             plaintext = ae_decrypt(mk, ciphertext, header)
@@ -198,22 +210,21 @@ class MessengerClient:
         except Exception:
             return None
 
-
-    def ratchetReceiveKey(self, state, header_dh):
+    def ratchetReceiveKey(self, state, header_dh, header_n):
         header_dh_key = deserialize_public_key(header_dh)
         
         if state.get('DHr') is None or serialize_public_key(state['DHr']) != header_dh:
             self.dHRatchet(state, header_dh_key)
         
-        if state.get('CKr') is None:
-            if state.get('CKs') is None:
-                raise Exception("no chain key available")
-            state['CKr'] = state['CKs']
+        if header_n < state['Nr']: 
+            return None
+        if header_n - state['Nr'] > MAX_SKIP:
+            return None
+        
 
-        mk, state['CKr'] = kdf_ck(state['CKr'])
+        state['CKr'], mk = kdf_ck(state['CKr'])
         state['Nr'] += 1
         return mk
-
 
     def dHRatchet(self, state, header_dh_key):
         state['PN'] = state['Ns']
