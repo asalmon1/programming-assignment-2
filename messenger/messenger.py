@@ -5,6 +5,10 @@ from cryptography.hazmat.primitives import hashes, hmac, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from panel import state
+
+
+
 
 
 def serialize_public_key(pk):
@@ -52,6 +56,16 @@ def ae_encrypt(mk, plaintext, associated_data):
     nonce = os.urandom(12)
     ct = aesgcm.encrypt(nonce, plaintext.encode(), associated_data)
     return nonce + ct
+
+def ae_decrypt(mk, ciphertext, associated_data):
+    aesgcm = AESGCM(mk)
+    nonce = ciphertext[:12]
+    ct = ciphertext[12:]
+    pt = aesgcm.decrypt(nonce, ct, associated_data)
+    return pt.decode()
+
+def dh(priv, pub):
+    return priv.exchange(ec.ECDH(), pub)
 
 class MessengerServer:
     def __init__(self, server_signing_key, server_decryption_key):
@@ -107,18 +121,18 @@ class MessengerClient:
         cert_data = pickle.loads(certificate)
         self.certs[cert_data['name']] = cert_data
 
-    def initializeConnection(self, name):
+    def initializeConnectionSender(self, name):
         if name not in self.certs:
             raise Exception("No certificate found for user: " + name)
         
         state = {}
 
-        state['DHs'] = generate_dh_keypair()
+        state['DHs'] = self.own_dh_keypair
         state['DHr'] = deserialize_public_key(self.certs[name]['pk'])
 
-        dh_sk = state['DHs'].exchange(ec.ECDH(), state['DHr'])
+        dh_sk = dh(state['DHs'], state['DHr'])
 
-        rk, cks = kdf_rk(dh_sk, dh_sk)
+        rk, cks = kdf_rk(b'\x00' * 32, dh_sk)
         state['RK'] = rk
         state['CKs'] = cks
 
@@ -126,13 +140,32 @@ class MessengerClient:
         state['Ns'] = 0
         state['Nr'] = 0
         state['PN'] = 0
-        state['MKSKIPPED'] = {}
+
+        self.conns[name] = state
+
+    def initializeConnectionReceiver(self, name):
+        if name not in self.certs:
+            raise Exception("No certificate found for user: " + name)
+        
+        state = {}
+
+        state['DHs'] = self.own_dh_keypair
+        state['DHr'] = None
+
+
+        state['RK'] = b'\x00' * 32
+        state['CKs'] = None
+
+        state['CKr'] = None
+        state['Ns'] = 0
+        state['Nr'] = 0
+        state['PN'] = 0
 
         self.conns[name] = state
 
     def sendMessage(self, name, message):
         if name not in self.conns:
-            self.initializeConnection(name)
+            self.initializeConnectionSender(name)
         
         state = self.conns[name]
 
@@ -145,8 +178,52 @@ class MessengerClient:
 
 
     def receiveMessage(self, name, header, ciphertext):
-        raise Exception("not implemented!")
-        return
+        if name not in self.conns:
+            self.initializeConnectionReceiver(name)
+
+        state = self.conns[name]
+
+        try:
+            header_obj = pickle.loads(header)
+            header_dh = header_obj['dh']
+        except Exception:
+            return None
+
+        mk = self.ratchetReceiveKey(state, header_dh)
+
+        try:
+            plaintext = ae_decrypt(mk, ciphertext, header)
+            return plaintext
+        except Exception:
+            return None
+
+
+    def ratchetReceiveKey(self, state, header_dh):
+        header_dh_key = deserialize_public_key(header_dh)
+        
+        if state.get('DHr') is None or serialize_public_key(state['DHr']) != header_dh:
+            self.dHRatchet(state, header_dh_key)
+        
+        if state.get('CKr') is None:
+            if state.get('CKs') is None:
+                raise Exception("no chain key available")
+            state['CKr'] = state['CKs']
+
+        mk, state['CKr'] = kdf_ck(state['CKr'])
+        state['Nr'] += 1
+        return mk
+
+
+    def dHRatchet(self, state, header_dh_key):
+        state['PN'] = state['Ns']
+        state['Ns'] = 0
+        state['Nr'] = 0
+        state['DHr'] = header_dh_key
+        
+        state['RK'], state['CKr'] = kdf_rk(state['RK'], dh(state['DHs'], state['DHr']))
+        state['DHs'] = generate_dh_keypair()
+        state['RK'], state['CKs'] = kdf_rk(state['RK'], dh(state['DHs'], state['DHr']))
+
 
     def report(self, name, message):
         report_pt = "Name: " + name + "\n" + message
