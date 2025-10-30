@@ -5,9 +5,6 @@ from cryptography.hazmat.primitives import hashes, hmac, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from panel import state
-
-
 
 
 
@@ -74,16 +71,20 @@ class MessengerServer:
 
     def decryptReport(self, ct):
         report = pickle.loads(ct)
-        shared_key = self.server_decryption_key.exchange(ec.ECDH(), report['pk'])
+        shared_key = self.server_decryption_key.exchange(ec.ECDH(), deserialize_public_key(report['pk']))
+
+        # get key hash
         digest = hashes.Hash(hashes.SHA256())
-        digest.update(shared_key)
+        digest.update(shared_key+report['pk'])
         key_hash = digest.finalize()
+
+        # aes decrypt
         aesgcm=AESGCM(key_hash)
         try:
-            pt = aesgcm.decrypt(report['nonce'],report['ct'])
+            pt = aesgcm.decrypt(report['nonce'],report['report'],None)
         except:
             raise Exception("report decryption failed")
-        return pt
+        return pt.decode("utf-8")
 
     def signCert(self, cert):
         signature = self.server_signing_key.sign(
@@ -226,16 +227,25 @@ class MessengerClient:
 
 
     def report(self, name, message):
-        report_pt = "Name: " + name + "\n" + message
-        report_bytes = bytes(report_pt,encoding='ascii')
+        # create and encode report
+        report_pt = "User Name: " + name + "\nReport: " + message
+        report_bytes = bytes(report_pt,encoding='utf-8')
+
+        # key exchange
         private_key = ec.generate_private_key(ec.SECP256R1())
         public_key = private_key.public_key()
         shared_key = private_key.exchange(ec.ECDH(), self.server_encryption_pk)
+
+        # hash pk and shared key (hashed el-gamal)
         digest = hashes.Hash(hashes.SHA256())
-        digest.update(shared_key)
+        digest.update(shared_key+serialize_public_key(public_key))
         key_hash = digest.finalize()
+
+        # aes (we don't need aad right?)
         nonce = os.urandom(12)
-        aesgcm=AESGCM(key_hash)
+        aesgcm = AESGCM(key_hash)
         ct = aesgcm.encrypt(nonce,report_bytes,None)
+
+        # serialize ct, nonce, pk
         report_ct = {'report': ct,'pk':serialize_public_key(public_key), 'nonce':nonce}
         return report_pt, pickle.dumps(report_ct)
