@@ -112,13 +112,13 @@ class MessengerClient:
         cert_data = pickle.loads(certificate)
         self.certs[cert_data['name']] = cert_data
 
-    def initializeConnection(self, name):
+    def initializeConnectionSender(self, name):
         if name not in self.certs:
             raise Exception("No certificate found for user: " + name)
         
         state = {}
 
-        state['DHs'] = generate_dh_keypair()
+        state['DHs'] = self.own_dh_keypair
         state['DHr'] = deserialize_public_key(self.certs[name]['pk'])
 
         dh_sk = dh(state['DHs'], state['DHr'])
@@ -134,9 +134,29 @@ class MessengerClient:
 
         self.conns[name] = state
 
+    def initializeConnectionReceiver(self, name):
+        if name not in self.certs:
+            raise Exception("No certificate found for user: " + name)
+        
+        state = {}
+
+        state['DHs'] = self.own_dh_keypair
+        state['DHr'] = None
+
+
+        state['RK'] = b'\x00' * 32
+        state['CKs'] = None
+
+        state['CKr'] = None
+        state['Ns'] = 0
+        state['Nr'] = 0
+        state['PN'] = 0
+
+        self.conns[name] = state
+
     def sendMessage(self, name, message):
         if name not in self.conns:
-            self.initializeConnection(name)
+            self.initializeConnectionSender(name)
         
         state = self.conns[name]
 
@@ -150,7 +170,7 @@ class MessengerClient:
 
     def receiveMessage(self, name, header, ciphertext):
         if name not in self.conns:
-            self.initializeConnection(name)
+            self.initializeConnectionReceiver(name)
 
         state = self.conns[name]
 
@@ -172,11 +192,15 @@ class MessengerClient:
     def ratchetReceiveKey(self, state, header_dh):
         header_dh_key = deserialize_public_key(header_dh)
         
-        if serialize_public_key(state['DHr']) != header_dh:
+        if state.get('DHr') is None or serialize_public_key(state['DHr']) != header_dh:
             self.dHRatchet(state, header_dh_key)
         
+        if state.get('CKr') is None:
+            if state.get('CKs') is None:
+                raise Exception("no chain key available")
+            state['CKr'] = state['CKs']
 
-        state['CKr'], mk = kdf_ck(state['CKr'])
+        mk, state['CKr'] = kdf_ck(state['CKr'])
         state['Nr'] += 1
         return mk
 
